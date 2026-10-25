@@ -145,29 +145,4 @@ __global__ void gemm_double_buffering(
             for (int i = 0; i < TM; ++i) {
                 #pragma unroll
                 for (int j = 0; j < TN; ++j) {
-                    threadResults[i][j] += regA[i] * regB[j];
-                }
-            }
-        }
-
-        __syncthreads();
-        readStage ^= 1;
-    }
-
-    // Epilog
-    #pragma unroll
-    for (int k = 0; k < BK; ++k) {
-        #pragma unroll
-        for (int i = 0; i < TM; ++i) {
-            regA[i] = As[readStage][threadRow * TM + i][k];
-        }
-
-        #pragma unroll
-        for (int j = 0; j < TN; ++j) {
-            regB[j] = Bs[readStage][k][threadCol * TN + j];
-        }
-
-        #pragma unroll
-        for (int i = 0; i < TM; ++i) {
-            #pragma unroll
-            for (int j =
+                    threadResults
