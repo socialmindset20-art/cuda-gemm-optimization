@@ -11,6 +11,7 @@
 #include "kernels/02_float4_padded.cuh"
 #include "kernels/03_double_buffering.cuh"
 #include "kernels/04_fp16_half2.cuh"
+#include "kernels/05_wmma_tensor_cores.cuh"
 
 #define CUDA_CHECK(err) \
     if (err != cudaSuccess) { \
@@ -31,13 +32,13 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "=========================================================" << std::endl;
-    std::cout << " CUDA GEMM Optimization Benchmark (FP32 vs FP16)" << std::endl;
+    std::cout << " CUDA GEMM Optimization Benchmark (FP32 vs FP16 vs WMMA)" << std::endl;
     std::cout << " Dimensões: M = " << M << ", N = " << N << ", K = " << K << std::endl;
     std::cout << "=========================================================\n" << std::endl;
 
     size_t size_A_fp16 = M * K * sizeof(__half);
     size_t size_B_fp16 = K * N * sizeof(__half);
-    size_t size_C_fp16 = M * N * sizeof(__half);
+    size_t size_C_fp32 = M * N * sizeof(float);
 
     std::vector<__half> h_A_fp16(M * K);
     std::vector<__half> h_B_fp16(K * N);
@@ -45,11 +46,13 @@ int main(int argc, char** argv) {
     for (int i = 0; i < M * K; ++i) h_A_fp16[i] = __float2half(static_cast<float>(rand() % 10) / 10.0f);
     for (int i = 0; i < K * N; ++i) h_B_fp16[i] = __float2half(static_cast<float>(rand() % 10) / 10.0f);
 
-    __half *d_A_fp16, *d_B_fp16, *d_C_custom_fp16, *d_C_cublas_fp16;
+    __half *d_A_fp16, *d_B_fp16;
+    float *d_C_wmma, *d_C_cublas_fp16;
+
     CUDA_CHECK(cudaMalloc(&d_A_fp16, size_A_fp16));
     CUDA_CHECK(cudaMalloc(&d_B_fp16, size_B_fp16));
-    CUDA_CHECK(cudaMalloc(&d_C_custom_fp16, size_C_fp16));
-    CUDA_CHECK(cudaMalloc(&d_C_cublas_fp16, size_C_fp16));
+    CUDA_CHECK(cudaMalloc(&d_C_wmma, size_C_fp32));
+    CUDA_CHECK(cudaMalloc(&d_C_cublas_fp16, size_C_fp32));
 
     CUDA_CHECK(cudaMemcpy(d_A_fp16, h_A_fp16.data(), size_A_fp16, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_B_fp16, h_B_fp16.data(), size_B_fp16, cudaMemcpyHostToDevice));
@@ -68,31 +71,31 @@ int main(int argc, char** argv) {
 
     // Reference: cuBLAS HGEMM
     CUBLAS_CHECK(cublasHgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, 
-                            &alpha_fp16, d_B_fp16, N, d_A_fp16, K, &beta_fp16, d_C_cublas_fp16, N));
+                            &alpha_fp16, d_B_fp16, N, d_A_fp16, K, &beta_fp16, reinterpret_cast<__half*>(d_C_cublas_fp16), N));
 
     CUDA_CHECK(cudaEventRecord(start));
     for (int i = 0; i < num_iterations; ++i) {
         CUBLAS_CHECK(cublasHgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, 
-                                &alpha_fp16, d_B_fp16, N, d_A_fp16, K, &beta_fp16, d_C_cublas_fp16, N));
+                                &alpha_fp16, d_B_fp16, N, d_A_fp16, K, &beta_fp16, reinterpret_cast<__half*>(d_C_cublas_fp16), N));
     }
     CUDA_CHECK(cudaEventRecord(stop));
     CUDA_CHECK(cudaEventSynchronize(stop));
 
     CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
-    float avg_ms_cublas_hgemm = ms / num_iterations;
-    double gflops_cublas_hgemm = (total_flops * 1e-9) / (avg_ms_cublas_hgemm / 1000.0f);
+    float avg_ms_cublas = ms / num_iterations;
+    double gflops_cublas = (total_flops * 1e-9) / (avg_ms_cublas / 1000.0f);
 
     std::cout << "[Reference] cuBLAS HGEMM (FP16): " << std::fixed << std::setprecision(2) 
-              << avg_ms_cublas_hgemm << " ms | " << gflops_cublas_hgemm << " GFLOPS\n" << std::endl;
+              << avg_ms_cublas << " ms | " << gflops_cublas << " GFLOPS\n" << std::endl;
 
-    // Kernel 04: FP16 half2
+    // Kernel 05: WMMA Tensor Cores
     {
-        dim3 blockDim(FP16_BN / FP16_TN, FP16_BM / FP16_TM);
-        dim3 gridDim((N + FP16_BN - 1) / FP16_BN, (M + FP16_BM - 1) / FP16_BM);
+        dim3 blockDim(config_wmma::BLOCK_DIM_X, config_wmma::BLOCK_DIM_Y);
+        dim3 gridDim((N + config_wmma::BN - 1) / config_wmma::BN, (M + config_wmma::BM - 1) / config_wmma::BM);
 
         CUDA_CHECK(cudaEventRecord(start));
         for (int i = 0; i < num_iterations; ++i) {
-            gemm_04_fp16_half2<<<gridDim, blockDim>>>(M, N, K, d_A_fp16, d_B_fp16, d_C_custom_fp16);
+            gemm_05_wmma_tensor_cores<<<gridDim, blockDim>>>(M, N, K, d_A_fp16, d_B_fp16, d_C_wmma);
         }
         CUDA_CHECK(cudaEventRecord(stop));
         CUDA_CHECK(cudaEventSynchronize(stop));
@@ -101,12 +104,12 @@ int main(int argc, char** argv) {
         float avg_ms = ms / num_iterations;
         double gflops = (total_flops * 1e-9) / (avg_ms / 1000.0f);
 
-        std::cout << "[Kernel 04] FP16 half2 (__hfma2): " << avg_ms << " ms | " << gflops << " GFLOPS\n";
+        std::cout << "[Kernel 05] WMMA Tensor Cores: " << avg_ms << " ms | " << gflops << " GFLOPS\n";
     }
 
     std::cout << "\n=========================================================" << std::endl;
 
     cublasDestroy(handle);
-    cudaFree(d_A_fp16); cudaFree(d_B_fp16); cudaFree(d_C_custom_fp16); cudaFree(d_C_cublas_fp16);
+    cudaFree(d_A_fp16); cudaFree(d_B_fp16); cudaFree(d_C_wmma); cudaFree(d_C_cublas_fp16);
     return 0;
 }
