@@ -1,0 +1,15 @@
+# Arquivos de Build do CMake
+build/
+bin/
+
+# Arquivos temporários e executáveis compilados
+*.o
+*.out
+*.exe
+gemm_bench
+gemm_bench_padded
+gemm_double_buffer_bench
+
+# Python cache
+__pycache__/
+*.pyc

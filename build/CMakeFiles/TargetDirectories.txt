@@ -1,3 +1,0 @@
-/content/cuda-gemm-optimization/build/CMakeFiles/gemm_bench.dir
-/content/cuda-gemm-optimization/build/CMakeFiles/edit_cache.dir
-/content/cuda-gemm-optimization/build/CMakeFiles/rebuild_cache.dir
