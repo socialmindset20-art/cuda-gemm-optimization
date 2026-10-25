@@ -3,14 +3,12 @@
 
 #include <cuda_runtime.h>
 
-namespace config_db {
-    constexpr int BM = 128; 
-    constexpr int BN = 128; 
-    constexpr int BK = 16;  
-    constexpr int TM = 8;   
-    constexpr int TN = 8;   
-    constexpr int PADDING = 4; 
-}
+constexpr int DB_BM = 128; 
+constexpr int DB_BN = 128; 
+constexpr int DB_BK = 16;  
+constexpr int DB_TM = 8;   
+constexpr int DB_TN = 8;   
+constexpr int DB_PADDING = 4; 
 
 __global__ void gemm_double_buffering(
     int M, int N, int K,
@@ -18,28 +16,26 @@ __global__ void gemm_double_buffering(
     const float* __restrict__ B,
     float* __restrict__ C) 
 {
-    using namespace config_db;
-
     const int blockRow = blockIdx.y;
     const int blockCol = blockIdx.x;
 
     const int threadRow = threadIdx.y;
     const int threadCol = threadIdx.x;
 
-    __shared__ float As[2][BM][BK + PADDING];
-    __shared__ float Bs[2][BK][BN + PADDING];
+    __shared__ float As[2][DB_BM][DB_BK + DB_PADDING];
+    __shared__ float Bs[2][DB_BK][DB_BN + DB_PADDING];
 
-    float threadResults[TM][TN] = {0.0f};
-    float regA[TM] = {0.0f};
-    float regB[TN] = {0.0f};
+    float threadResults[DB_TM][DB_TN] = {0.0f};
+    float regA[DB_TM] = {0.0f};
+    float regB[DB_TN] = {0.0f};
 
     const int tid = threadIdx.y * blockDim.x + threadIdx.x;
 
-    const int aSharedRow = tid / (BK / 4);
-    const int aSharedCol = (tid % (BK / 4)) * 4;
+    const int aSharedRow = tid / (DB_BK / 4);
+    const int aSharedCol = (tid % (DB_BK / 4)) * 4;
 
-    const int bSharedRow = tid / (BN / 4);
-    const int bSharedCol = (tid % (BN / 4)) * 4;
+    const int bSharedRow = tid / (DB_BN / 4);
+    const int bSharedCol = (tid % (DB_BN / 4)) * 4;
 
     int writeStage = 0;
     int readStage = 0;
@@ -48,9 +44,9 @@ __global__ void gemm_double_buffering(
     
     // Prolog
     #pragma unroll
-    for (int loadOffset = 0; loadOffset < BM; loadOffset += (256 / (BK / 4))) {
+    for (int loadOffset = 0; loadOffset < DB_BM; loadOffset += (256 / (DB_BK / 4))) {
         int currRow = aSharedRow + loadOffset;
-        int aGlobalRow = blockRow * BM + currRow;
+        int aGlobalRow = blockRow * DB_BM + currRow;
         int aGlobalCol = bk + aSharedCol;
 
         if (aGlobalRow < M && aGlobalCol < K) {
@@ -68,10 +64,10 @@ __global__ void gemm_double_buffering(
     }
 
     #pragma unroll
-    for (int loadOffset = 0; loadOffset < BK; loadOffset += (256 / (BN / 4))) {
+    for (int loadOffset = 0; loadOffset < DB_BK; loadOffset += (256 / (DB_BN / 4))) {
         int currRow = bSharedRow + loadOffset;
         int bGlobalRow = bk + currRow;
-        int bGlobalCol = blockCol * BN + bSharedCol;
+        int bGlobalCol = blockCol * DB_BN + bSharedCol;
 
         if (bGlobalRow < K && bGlobalCol < N) {
             float4 tmpB = reinterpret_cast<const float4*>(&B[bGlobalRow * N + bGlobalCol])[0];
@@ -90,13 +86,13 @@ __global__ void gemm_double_buffering(
     __syncthreads();
 
     // Main Loop
-    for (bk = BK; bk < K; bk += BK) {
+    for (bk = DB_BK; bk < K; bk += DB_BK) {
         writeStage ^= 1;
 
         #pragma unroll
-        for (int loadOffset = 0; loadOffset < BM; loadOffset += (256 / (BK / 4))) {
+        for (int loadOffset = 0; loadOffset < DB_BM; loadOffset += (256 / (DB_BK / 4))) {
             int currRow = aSharedRow + loadOffset;
-            int aGlobalRow = blockRow * BM + currRow;
+            int aGlobalRow = blockRow * DB_BM + currRow;
             int aGlobalCol = bk + aSharedCol;
 
             if (aGlobalRow < M && aGlobalCol < K) {
@@ -114,10 +110,10 @@ __global__ void gemm_double_buffering(
         }
 
         #pragma unroll
-        for (int loadOffset = 0; loadOffset < BK; loadOffset += (256 / (BN / 4))) {
+        for (int loadOffset = 0; loadOffset < DB_BK; loadOffset += (256 / (DB_BN / 4))) {
             int currRow = bSharedRow + loadOffset;
             int bGlobalRow = bk + currRow;
-            int bGlobalCol = blockCol * BN + bSharedCol;
+            int bGlobalCol = blockCol * DB_BN + bSharedCol;
 
             if (bGlobalRow < K && bGlobalCol < N) {
                 float4 tmpB = reinterpret_cast<const float4*>(&B[bGlobalRow * N + bGlobalCol])[0];
@@ -134,21 +130,21 @@ __global__ void gemm_double_buffering(
         }
 
         #pragma unroll
-        for (int k = 0; k < BK; ++k) {
+        for (int k = 0; k < DB_BK; ++k) {
             #pragma unroll
-            for (int i = 0; i < TM; ++i) {
-                regA[i] = As[readStage][threadRow * TM + i][k];
+            for (int i = 0; i < DB_TM; ++i) {
+                regA[i] = As[readStage][threadRow * DB_TM + i][k];
             }
 
             #pragma unroll
-            for (int j = 0; j < TN; ++j) {
-                regB[j] = Bs[readStage][k][threadCol * TN + j];
+            for (int j = 0; j < DB_TN; ++j) {
+                regB[j] = Bs[readStage][k][threadCol * DB_TN + j];
             }
 
             #pragma unroll
-            for (int i = 0; i < TM; ++i) {
+            for (int i = 0; i < DB_TM; ++i) {
                 #pragma unroll
-                for (int j = 0; j < TN; ++j) {
+                for (int j = 0; j < DB_TN; ++j) {
                     threadResults[i][j] += regA[i] * regB[j];
                 }
             }
@@ -160,21 +156,21 @@ __global__ void gemm_double_buffering(
 
     // Epilog
     #pragma unroll
-    for (int k = 0; k < BK; ++k) {
+    for (int k = 0; k < DB_BK; ++k) {
         #pragma unroll
-        for (int i = 0; i < TM; ++i) {
-            regA[i] = As[readStage][threadRow * TM + i][k];
+        for (int i = 0; i < DB_TM; ++i) {
+            regA[i] = As[readStage][threadRow * DB_TM + i][k];
         }
 
         #pragma unroll
-        for (int j = 0; j < TN; ++j) {
-            regB[j] = Bs[readStage][k][threadCol * TN + j];
+        for (int j = 0; j < DB_TN; ++j) {
+            regB[j] = Bs[readStage][k][threadCol * DB_TN + j];
         }
 
         #pragma unroll
-        for (int i = 0; i < TM; ++i) {
+        for (int i = 0; i < DB_TM; ++i) {
             #pragma unroll
-            for (int j = 0; j < TN; ++j) {
+            for (int j = 0; j < DB_TN; ++j) {
                 threadResults[i][j] += regA[i] * regB[j];
             }
         }
@@ -182,11 +178,11 @@ __global__ void gemm_double_buffering(
 
     // Write back
     #pragma unroll
-    for (int i = 0; i < TM; ++i) {
+    for (int i = 0; i < DB_TM; ++i) {
         #pragma unroll
-        for (int j = 0; j < TN; j += 4) {
-            int globalRow = blockRow * BM + threadRow * TM + i;
-            int globalCol = blockCol * BN + threadCol * TN + j;
+        for (int j = 0; j < DB_TN; j += 4) {
+            int globalRow = blockRow * DB_BM + threadRow * DB_TM + i;
+            int globalCol = blockCol * DB_BN + threadCol * DB_TN + j;
 
             if (globalRow < M && globalCol < N) {
                 float4 tmpC;
