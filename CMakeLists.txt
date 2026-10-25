@@ -12,7 +12,22 @@ endif()
 
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3 --use_fast_math")
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
+include(FetchContent)
+
+FetchContent_Declare(
+    cutlass
+    GIT_REPOSITORY https://github.com/NVIDIA/cutlass.git
+    GIT_TAG        v3.5.0
+    GIT_SHALLOW    TRUE
+)
+
+set(CUTLASS_ENABLE_HEADERS_ONLY ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(cutlass)
+
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${cutlass_SOURCE_DIR}/include
+)
 
 find_package(CUDAToolkit REQUIRED)
 
@@ -25,7 +40,9 @@ add_executable(gemm_bench
     include/kernels/04_fp16_half2.cuh
     include/kernels/05_wmma_tensor_cores.cuh
     include/kernels/06_generic_gemm.cuh
+    include/kernels/07_cutlass_basic.cuh
+    include/kernels/08_cutlass_tensor_op.cuh
 )
 
-target_link_libraries(gemm_bench PRIVATE CUDA::cublas CUDA::cudart)
+target_link_libraries(gemm_bench PRIVATE CUDA::cublas CUDA::cudart nvidia::cutlass::cutlass)
 set_property(TARGET gemm_bench PROPERTY CUDA_ARCHITECTURES 75 80 89)
