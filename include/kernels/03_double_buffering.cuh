@@ -42,7 +42,7 @@ __global__ void gemm_double_buffering(
 
     int bk = 0;
     
-    // Prolog
+    // 1. Prolog
     #pragma unroll
     for (int loadOffset = 0; loadOffset < BM; loadOffset += (256 / (BK / 4))) {
         int currRow = aSharedRow + loadOffset;
@@ -85,7 +85,7 @@ __global__ void gemm_double_buffering(
 
     __syncthreads();
 
-    // Main Loop
+    // 2. Main Loop
     for (bk = BK; bk < K; bk += BK) {
         writeStage ^= 1;
 
@@ -145,4 +145,56 @@ __global__ void gemm_double_buffering(
             for (int i = 0; i < TM; ++i) {
                 #pragma unroll
                 for (int j = 0; j < TN; ++j) {
-                    threadResults
+                    threadResults[i][j] += regA[i] * regB[j];
+                }
+            }
+        }
+
+        __syncthreads();
+        readStage ^= 1;
+    }
+
+    // 3. Epilog
+    #pragma unroll
+    for (int k = 0; k < BK; ++k) {
+        #pragma unroll
+        for (int i = 0; i < TM; ++i) {
+            regA[i] = As[readStage][threadRow * TM + i][k];
+        }
+
+        #pragma unroll
+        for (int j = 0; j < TN; ++j) {
+            regB[j] = Bs[readStage][k][threadCol * TN + j];
+        }
+
+        #pragma unroll
+        for (int i = 0; i < TM; ++i) {
+            #pragma unroll
+            for (int j = 0; j < TN; ++j) {
+                threadResults[i][j] += regA[i] * regB[j];
+            }
+        }
+    }
+
+    // 4. Write back
+    #pragma unroll
+    for (int i = 0; i < TM; ++i) {
+        #pragma unroll
+        for (int j = 0; j < TN; j += 4) {
+            int globalRow = blockRow * BM + threadRow * TM + i;
+            int globalCol = blockCol * BN + threadCol * TN + j;
+
+            if (globalRow < M && globalCol < N) {
+                float4 tmpC;
+                tmpC.x = threadResults[i][j + 0];
+                tmpC.y = threadResults[i][j + 1];
+                tmpC.z = threadResults[i][j + 2];
+                tmpC.w = threadResults[i][j + 3];
+
+                reinterpret_cast<float4*>(&C[globalRow * N + globalCol])[0] = tmpC;
+            }
+        }
+    }
+}
+
+#endif // DOUBLE_BUFFERING_CUH
