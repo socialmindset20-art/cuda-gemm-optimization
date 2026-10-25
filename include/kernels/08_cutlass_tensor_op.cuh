@@ -5,14 +5,13 @@
 #include <cuda_fp16.h>
 #include <iostream>
 
-// Headers do CUTLASS para Tensor Cores
 #include "cutlass/cutlass.h"
 #include "cutlass/gemm/device/gemm.h"
 #include "cutlass/numeric_types.h"
 
 /**
  * Kernel GEMM 08: CUTLASS Tensor Cores (OpClassTensorOp)
- * Opera em FP16 (entradas) e acumula em FP32 para máxima performance e precisão.
+ * Configuração otimizada para matrizes A (RowMajor) e B (RowMajor) em FP16
  */
 inline void run_08_cutlass_tensor_op(
     int M, int N, int K,
@@ -22,27 +21,24 @@ inline void run_08_cutlass_tensor_op(
     float beta,
     float* C) 
 {
-    // 1. Definição dos Tipos de Dados
-    using ElementInputA = cutlass::half_t;      // FP16 para matriz A
-    using ElementInputB = cutlass::half_t;      // FP16 para matriz B
-    using ElementOutput = float;               // FP32 para resultado C
-    using ElementAccumulator = float;          // FP32 para acumulador intermediário
+    using ElementInputA = cutlass::half_t;
+    using ElementInputB = cutlass::half_t;
+    using ElementOutput = float;
+    using ElementAccumulator = float;
 
     using LayoutInputA = cutlass::layout::RowMajor;
     using LayoutInputB = cutlass::layout::RowMajor;
     using LayoutOutput = cutlass::layout::RowMajor;
 
-    // 2. Arquitetura da GPU (Sm75 para Turing/T4, Sm80 para Ampere/A100, Sm89 para L4)
     using ElementCompute = float;
-    using OperatorClass = cutlass::arch::OpClassTensorOp; // Habilita Tensor Cores!
-    using ArchTag = cutlass::arch::Sm75;                  // Compatibilidade mínima Turing (T4)
+    using OperatorClass = cutlass::arch::OpClassTensorOp;
+    using ArchTag = cutlass::arch::Sm75;
 
-    // 3. Geometria das Instantes de Execução (Tiles)
+    // Formas geométricas padrão suportadas para Tensor Cores em RowMajor/RowMajor
     using ThreadblockShape = cutlass::gemm::GemmShape<128, 128, 32>;
     using WarpShape        = cutlass::gemm::GemmShape<64, 64, 32>;
-    using InstructionShape = cutlass::gemm::GemmShape<16, 8, 16>; // Instrução nativa do hardware
+    using InstructionShape = cutlass::gemm::GemmShape<16, 8, 8>; // Instrução nativa compatível
 
-    // 4. Configuração do Epílogo
     using EpilogueOutputOp = cutlass::epilogue::thread::LinearCombination<
         ElementOutput,
         128 / cutlass::sizeof_bits<ElementOutput>::value,
@@ -50,7 +46,6 @@ inline void run_08_cutlass_tensor_op(
         ElementCompute
     >;
 
-    // 5. Instanciação do Kernel CUTLASS TensorOp via Template
     using CutlassGemmTensorOp = cutlass::gemm::device::Gemm<
         ElementInputA, LayoutInputA,
         ElementInputB, LayoutInputB,
@@ -66,11 +61,9 @@ inline void run_08_cutlass_tensor_op(
 
     CutlassGemmTensorOp gemm_operator;
 
-    // Conversão segura de ponteiros para o tipo interno do CUTLASS (half_t)
     const cutlass::half_t* ptrA = reinterpret_cast<const cutlass::half_t*>(A);
     const cutlass::half_t* ptrB = reinterpret_cast<const cutlass::half_t*>(B);
 
-    // 6. Empacotamento dos Argumentos
     CutlassGemmTensorOp::Arguments arguments{
         {M, N, K},
         {ptrA, K},
@@ -80,7 +73,6 @@ inline void run_08_cutlass_tensor_op(
         {alpha, beta}
     };
 
-    // 7. Alocação de Workspace em Memória GPU
     size_t workspace_size = CutlassGemmTensorOp::get_workspace_size(arguments);
     uint8_t* workspace_ptr = nullptr;
     if (workspace_size > 0) {
@@ -89,15 +81,14 @@ inline void run_08_cutlass_tensor_op(
 
     cutlass::Status status = gemm_operator.can_implement(arguments);
     if (status != cutlass::Status::kSuccess) {
-        std::cerr << "O CUTLASS TensorOp não suporta as dimensões/hardware informados!" << std::endl;
+        std::cerr << "CUTLASS can_implement falhou para as dimensões fornecidas!" << std::endl;
         if (workspace_ptr) cudaFree(workspace_ptr);
         return;
     }
 
-    // 8. Lançamento do Kernel na GPU
     status = gemm_operator(arguments, workspace_ptr);
     if (status != cutlass::Status::kSuccess) {
-        std::cerr << "Erro durante a execução do Kernel 08 CUTLASS TensorOp!" << std::endl;
+        std::cerr << "Erro de execução no Kernel 08 CUTLASS TensorOp!" << std::endl;
     }
 
     if (workspace_ptr) {
