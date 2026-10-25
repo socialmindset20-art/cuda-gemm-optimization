@@ -3,12 +3,14 @@
 
 #include <cuda_runtime.h>
 
-constexpr int BM = 128; 
-constexpr int BN = 128; 
-constexpr int BK = 16;  
-constexpr int TM = 8;   
-constexpr int TN = 8;   
-constexpr int PADDING = 4; 
+namespace config_db {
+    constexpr int BM = 128; 
+    constexpr int BN = 128; 
+    constexpr int BK = 16;  
+    constexpr int TM = 8;   
+    constexpr int TN = 8;   
+    constexpr int PADDING = 4; 
+}
 
 __global__ void gemm_double_buffering(
     int M, int N, int K,
@@ -16,6 +18,8 @@ __global__ void gemm_double_buffering(
     const float* __restrict__ B,
     float* __restrict__ C) 
 {
+    using namespace config_db;
+
     const int blockRow = blockIdx.y;
     const int blockCol = blockIdx.x;
 
@@ -42,7 +46,7 @@ __global__ void gemm_double_buffering(
 
     int bk = 0;
     
-    // 1. Prolog
+    // Prolog
     #pragma unroll
     for (int loadOffset = 0; loadOffset < BM; loadOffset += (256 / (BK / 4))) {
         int currRow = aSharedRow + loadOffset;
@@ -85,7 +89,7 @@ __global__ void gemm_double_buffering(
 
     __syncthreads();
 
-    // 2. Main Loop
+    // Main Loop
     for (bk = BK; bk < K; bk += BK) {
         writeStage ^= 1;
 
@@ -154,7 +158,7 @@ __global__ void gemm_double_buffering(
         readStage ^= 1;
     }
 
-    // 3. Epilog
+    // Epilog
     #pragma unroll
     for (int k = 0; k < BK; ++k) {
         #pragma unroll
@@ -176,7 +180,7 @@ __global__ void gemm_double_buffering(
         }
     }
 
-    // 4. Write back
+    // Write back
     #pragma unroll
     for (int i = 0; i < TM; ++i) {
         #pragma unroll
