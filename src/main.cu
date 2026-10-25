@@ -90,8 +90,8 @@ int main(int argc, char** argv) {
 
     // Kernel 05: WMMA Tensor Cores
     {
-        dim3 blockDim(config_wmma::BLOCK_DIM_X, config_wmma::BLOCK_DIM_Y);
-        dim3 gridDim((N + config_wmma::BN - 1) / config_wmma::BN, (M + config_wmma::BM - 1) / config_wmma::BM);
+        dim3 blockDim(WMMA_BLOCK_DIM_X, WMMA_BLOCK_DIM_Y);
+        dim3 gridDim((N + WMMA_BN - 1) / WMMA_BN, (M + WMMA_BM - 1) / WMMA_BM);
 
         CUDA_CHECK(cudaEventRecord(start));
         for (int i = 0; i < num_iterations; ++i) {
