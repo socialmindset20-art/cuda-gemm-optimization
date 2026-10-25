@@ -1,0 +1,30 @@
+name: CMake Build & Compile CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout do Repositório
+      uses: actions/checkout@v3
+
+    - name: Instalar CUDA Toolkit no Runner
+      uses: Jimver/cuda-toolkit@v0.2.11
+      with:
+        cuda: '12.2.0'
+        method: 'network'
+
+    - name: Verificar Instalação do NVCC
+      run: nvcc --version
+
+    - name: Configurar CMake
+      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=Release
+
+    - name: Compilar Projeto
+      run: cmake --build ${{github.workspace}}/build --config Release -j$(nproc)
