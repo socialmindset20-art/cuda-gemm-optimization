@@ -11,10 +11,11 @@ kernel_01 = []
 kernel_02 = []
 kernel_03 = []
 kernel_04 = []
+kernel_05 = []
 cublas_sgemm_ref = []
 cublas_hgemm_ref = []
 
-print("Executando bateria de benchmarks via CMake (FP32 & FP16)...")
+print("Executando bateria de benchmarks via CMake (FP32, FP16 & WMMA Tensor Cores)...")
 
 for N in sizes:
     print(f"Testando N = {N}...")
@@ -29,24 +30,19 @@ for N in sizes:
     k2 = re.search(r'\[Kernel 02\] 2D Reg \+ float4 \+ Pad:.*\| (\d+\.\d+) GFLOPS', output)
     k3 = re.search(r'\[Kernel 03\] Double Buffering:.*\| (\d+\.\d+) GFLOPS', output)
     k4 = re.search(r'\[Kernel 04\] FP16 half2 \(__hfma2\):.*\| (\d+\.\d+) GFLOPS', output)
+    k5 = re.search(r'\[Kernel 05\] WMMA Tensor Cores:.*\| (\d+\.\d+) GFLOPS', output)
 
-    if cublas_h and k4:
-        cublas_hgemm_ref.append(float(cublas_h.group(1)) / 1000.0) # Converte para TFLOPS
-        kernel_04.append(float(k4.group(1)) / 1000.0)
-
-    if cublas_s:
-        cublas_sgemm_ref.append(float(cublas_s.group(1)) / 1000.0)
-    if k0:
-        kernel_00.append(float(k0.group(1)) / 1000.0)
-    if k1:
-        kernel_01.append(float(k1.group(1)) / 1000.0)
-    if k2:
-        kernel_02.append(float(k2.group(1)) / 1000.0)
-    if k3:
-        kernel_03.append(float(k3.group(1)) / 1000.0)
+    if cublas_h: cublas_hgemm_ref.append(float(cublas_h.group(1)) / 1000.0) # TFLOPS
+    if cublas_s: cublas_sgemm_ref.append(float(cublas_s.group(1)) / 1000.0)
+    if k0: kernel_00.append(float(k0.group(1)) / 1000.0)
+    if k1: kernel_01.append(float(k1.group(1)) / 1000.0)
+    if k2: kernel_02.append(float(k2.group(1)) / 1000.0)
+    if k3: kernel_03.append(float(k3.group(1)) / 1000.0)
+    if k4: kernel_04.append(float(k4.group(1)) / 1000.0)
+    if k5: kernel_05.append(float(k5.group(1)) / 1000.0)
 
 # Gerar o Gráfico de Desempenho
-plt.figure(figsize=(11, 7))
+plt.figure(figsize=(12, 7))
 
 # Kernels FP32
 if kernel_00: plt.plot(sizes[:len(kernel_00)], kernel_00, marker='o', label='Kernel 00: Naive (FP32)')
@@ -55,11 +51,12 @@ if kernel_02: plt.plot(sizes[:len(kernel_02)], kernel_02, marker='^', linewidth=
 if kernel_03: plt.plot(sizes[:len(kernel_03)], kernel_03, marker='d', linewidth=2.0, label='Kernel 03: Double Buffering (FP32)')
 if cublas_sgemm_ref: plt.plot(sizes[:len(cublas_sgemm_ref)], cublas_sgemm_ref, marker='x', linestyle='--', color='gray', label='cuBLAS SGEMM (FP32 Ref)')
 
-# Kernels FP16
-if kernel_04: plt.plot(sizes[:len(kernel_04)], kernel_04, marker='P', linewidth=2.5, color='purple', label='Kernel 04: FP16 half2 (__hfma2)')
+# Kernels FP16 & WMMA
+if kernel_04: plt.plot(sizes[:len(kernel_04)], kernel_04, marker='P', linewidth=2.0, color='purple', label='Kernel 04: FP16 half2 (__hfma2)')
+if kernel_05: plt.plot(sizes[:len(kernel_05)], kernel_05, marker='h', linewidth=2.5, color='green', label='Kernel 05: WMMA Tensor Cores (FP16)')
 if cublas_hgemm_ref: plt.plot(sizes[:len(cublas_hgemm_ref)], cublas_hgemm_ref, marker='*', linestyle='--', color='magenta', label='cuBLAS HGEMM (FP16 Ref)')
 
-plt.title('CUDA GEMM Optimization: FP32 vs FP16 Performance', fontsize=14, fontweight='bold')
+plt.title('CUDA GEMM Optimization: FP32 vs FP16 vs WMMA Tensor Cores', fontsize=14, fontweight='bold')
 plt.xlabel('Dimensão da Matriz (N x N)', fontsize=12)
 plt.ylabel('Desempenho (TFLOPS)', fontsize=12)
 plt.grid(True, linestyle=':', alpha=0.7)
@@ -68,4 +65,4 @@ plt.tight_layout()
 
 os.makedirs('docs', exist_ok=True)
 plt.savefig('docs/gemm_performance.png', dpi=300)
-print("Gráfico 'docs/gemm_performance.png' atualizado com sucesso!")
+print("Gráfico 'docs/gemm_performance.png' regenerado com sucesso!")
