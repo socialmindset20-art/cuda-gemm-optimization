@@ -1,0 +1,1 @@
+/usr/bin/g++ -Wl,--dependency-file=CMakeFiles/gemm_bench.dir/link.d @CMakeFiles/gemm_bench.dir/objects1.rsp -o gemm_bench @CMakeFiles/gemm_bench.dir/linkLibs.rsp -L"/usr/local/cuda/targets/x86_64-linux/lib/stubs" -L"/usr/local/cuda/targets/x86_64-linux/lib"
