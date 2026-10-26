@@ -5,17 +5,11 @@
 #include <cuda_fp16.h>
 #include <cstdint>
 
-// Dimensões dos Tiles de Bloco e Guerra
 constexpr int SOL_BM = 128;
 constexpr int SOL_BN = 128;
 constexpr int SOL_BK = 32;
-
-// Padding na Shared Memory para eliminar completamente Bank Conflicts (128 bytes alignment)
 constexpr int SOL_PAD_K = 8;
 
-/**
- * Assembly PTX: Copia 16 bytes (8x half) da Memória Global para a SRAM assincronamente (bypass RF)
- */
 __device__ __forceinline__ void cp_async_cg(void* smem_ptr, const void* gmem_ptr) {
     uint32_t smem_addr = __cvta_generic_to_shared(smem_ptr);
     asm volatile(
@@ -25,9 +19,6 @@ __device__ __forceinline__ void cp_async_cg(void* smem_ptr, const void* gmem_ptr
     );
 }
 
-/**
- * Assembly PTX: Garante a barreira do pipeline de cópia assíncrona
- */
 __device__ __forceinline__ void cp_async_commit() {
     asm volatile("cp.async.commit_group;\n" ::);
 }
@@ -37,9 +28,7 @@ __device__ __forceinline__ void cp_async_wait_group() {
     asm volatile("cp.async.wait_group %0;\n" :: "n"(N));
 }
 
-/**
- * Assembly PTX: Executa instrução de Tensor Core nativa mma.sync.aligned.m16n8k16 em FP16
- */
+// Corrigido para utilizar 2 registradores de 32-bit no operando B (2x32bit = 4x16bit half)
 __device__ __forceinline__ void mma_m16n8k16(
     float* c_accum, 
     const unsigned int* a_reg, 
@@ -47,16 +36,13 @@ __device__ __forceinline__ void mma_m16n8k16(
 {
     asm volatile(
         "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
-        "{%0, %1, %2, %3}, {%4, %5}, {%6}, {%0, %1, %2, %3};\n"
+        "{%0, %1, %2, %3}, {%4, %5}, {%6, %7}, {%0, %1, %2, %3};\n"
         : "+f"(c_accum[0]), "+f"(c_accum[1]), "+f"(c_accum[2]), "+f"(c_accum[3])
         : "r"(a_reg[0]), "r"(a_reg[1]),
-          "r"(b_reg[0])
+          "r"(b_reg[0]), "r"(b_reg[1])
     );
 }
 
-/**
- * Kernel 09: Speed-Of-Light GEMM com Async Copy, Double Buffering e MMA PTX
- */
 __global__ void gemm_09_hopper_ampere_sol(
     int M, int N, int K,
     float alpha,
@@ -105,18 +91,19 @@ __global__ void gemm_09_hopper_ampere_sol(
             cp_async_cg(&smem_A[write_stage][load_a_row][load_a_col], &A[global_a_row * K + global_a_col]);
         }
         if (global_b_row < K && global_b_col < N) {
-            cp_async_cg(&smem_B[write_stage][load_b_row][load_b_col], &B[global_b_row * N + global_b_col]);
+            cp_async_cg(&smem_B[write_stage][load_b_row][load_b_col], &B[load_b_row * N + global_b_col]);
         }
         cp_async_commit();
 
         #pragma unroll
         for (int k_step = 0; k_step < SOL_BK; k_step += 16) {
             unsigned int a_reg[2];
-            unsigned int b_reg[1];
+            unsigned int b_reg[2];
 
             a_reg[0] = *reinterpret_cast<unsigned int*>(&smem_A[read_stage][threadIdx.y * 16][k_step]);
             a_reg[1] = *reinterpret_cast<unsigned int*>(&smem_A[read_stage][threadIdx.y * 16 + 8][k_step]);
             b_reg[0] = *reinterpret_cast<unsigned int*>(&smem_B[read_stage][k_step][threadIdx.x * 8]);
+            b_reg[1] = *reinterpret_cast<unsigned int*>(&smem_B[read_stage][k_step + 8][threadIdx.x * 8]);
 
             mma_m16n8k16(accum[0], a_reg, b_reg);
         }
