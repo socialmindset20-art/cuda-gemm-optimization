@@ -7,10 +7,10 @@
 
 #include "kernels/00_naive.cuh"
 #include "kernels/01_shared_mem.cuh"
-#include "kernels/02_reg_tiling.cuh"
+#include "kernels/02_float4_padded.cuh"
 #include "kernels/03_double_buffering.cuh"
-#include "kernels/04_fp16_simd.cuh"
-#include "kernels/05_wmma_tensor_op.cuh"
+#include "kernels/04_fp16_half2.cuh"
+#include "kernels/05_wmma_tensor_cores.cuh"
 #include "kernels/06_generic_gemm.cuh"
 #include "kernels/07_cutlass_basic.cuh"
 #include "kernels/08_cutlass_tensor_op.cuh"
@@ -98,9 +98,20 @@ int main(int argc, char** argv) {
     cudaEventElapsedTime(&ms_cublas, start, stop);
     std::cout << "[Reference] cuBLAS SGEMM (FP32): " << ms_cublas << " ms | " << (flops * 1e-6 / ms_cublas) << " GFLOPS" << std::endl;
 
-    // Reference: cuBLAS HGEMM
+    // Reference: cuBLAS HGEMM (Substituído por cublasGemmEx)
     cudaEventRecord(start);
-    cublasSgemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, d_B_fp16, CUDA_R_16F, N, d_A_fp16, CUDA_R_16F, K, &beta, d_C, CUDA_R_32F, N, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+    cublasGemmEx(
+        handle,
+        CUBLAS_OP_N, CUBLAS_OP_N,
+        N, M, K,
+        &alpha,
+        d_B_fp16, CUDA_R_16F, N,
+        d_A_fp16, CUDA_R_16F, K,
+        &beta,
+        d_C, CUDA_R_32F, N,
+        CUBLAS_COMPUTE_32F,
+        CUBLAS_GEMM_DEFAULT_TENSOR_OP
+    );
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     float ms_cublas_hgemm = 0;
